@@ -5,6 +5,7 @@ import java.util.Set;
 
 import java.util.ArrayList;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 
@@ -62,7 +63,7 @@ public class Crawler {
 	
 	
 	/**
-	 * 	Primary logic for stepping through
+	 * 	Primary logic for stepping through wikipedia for data
 	 * 
 	 */
 	private void step(){
@@ -76,71 +77,52 @@ public class Crawler {
 			String pageTitle = doc.title().replace(" - Wikipedia", "");		
 			Elements rows = infoTable.select("tr");
 			
+			PageType pageType = PageType.UNKNOWN;
+			
+			
+			List<String> links = extractLinks(rows, pageType);
 			ArrayList<QueueArtist> newArtists = new ArrayList<QueueArtist>();
 			
-			PageType pageType = PageType.UNKNOWN;
-			//iterate through each row of wikipedia infobox
-			for(Element row : rows){
-				String headerContent = row.select("th").text().toLowerCase();				
+			for(String link : links){
+				QueueArtist qa = new QueueArtist();
 				
-				if(headerContent.equals("members") || headerContent.equals("former members") || headerContent.equals("past members")){
-					pageType = PageType.BAND;
-				}else if (headerContent.equals("associated acts")){
-					pageType = PageType.ARTIST;
+				if(pageType == PageType.BAND){
+					
+					qa.setFromURL(curArtist.getFromURL());
+					qa.setArtistName(curArtist.getArtistName());
+					qa.setConnection(pageTitle);
+					qa.setToURL(link);
+					
+					if (isCrawling){
+						linkQueue.add(qa);
+					}
+					
+				}else{
+					
+					qa.setArtistName(pageTitle);
+					qa.setFromURL(curArtist.getToURL());
+					qa.setToURL(link);
+					
+					newArtists.add(qa);
 				}
 				
-				if(pageType != PageType.UNKNOWN){
-					//Selects the links of table rows where bands or artists are contained
-					Elements links = row.select("a");
-					for(Element link : links){
-						String linkPath = wikiBase + link.attr("href");
-						QueueArtist an = new QueueArtist();
-						
-						if(pageType==PageType.ARTIST){
-							
-							an.setFromURL(curArtist.getFromURL());
-							an.setArtistName(curArtist.getArtistName());
-							an.setConnection(pageTitle);
-							an.setToURL(linkPath);
-							
-							if (isCrawling){
-								linkQueue.add(an);
-							}
-						}else{
-							//TODO: Add artists to each other
-							an.setArtistName(pageTitle);
-							an.setFromURL(curArtist.getToURL());
-							an.setToURL(linkPath);
-							
-							newArtists.add(an);
-						}
-						
-					}
+			}
+			
+			
+			if(isCrawling){
+				for(QueueArtist an : newArtists){
+					linkQueue.add(an);
 				}
 			}
 			
-			visited.put(curArtist.getToURL(), pageTitle);
 			
 			if(pageType == PageType.ARTIST){
-				
-				if(isCrawling){
-					System.out.println("Still adding");
-					for(QueueArtist an : newArtists){
-						linkQueue.add(an);
-					}
-				}
-				
-				curArtist.setToArtist(pageTitle);
-				if(curArtist.getConnection() == null){
-					curArtist.setConnection("Direct");
-				}
-				
-				if(curArtist.isComplete() && curArtist.isValidNode()){
-					completed.add(curArtist);
-				}
+				processArtist(curArtist, pageTitle);
 			}
+			
+			System.out.println();
 		}catch(Exception e){
-			e.printStackTrace();
+			
 		}
 	}
 	
@@ -148,6 +130,7 @@ public class Crawler {
 		artistGraph = new HashMap<String, Node>();
 		for(QueueArtist an : completed){
 			Node n;
+			
 			if(( n = artistGraph.get(an.getArtistName()) ) == null){
 				n = new Node(an.getArtistName());
 				n.addConnection(an.getToArtist(), an.getConnection());
@@ -202,6 +185,51 @@ public class Crawler {
 		System.out.println(names.size() + " artists saved to db.");
 		
 		Neo4jLayer.close();
+	}
+	
+	private List<String> extractLinks(Elements rows, PageType pageType){
+		List<String> memberLinks = new ArrayList<String>();
+		List<String> associatedActsLinks = new ArrayList<String>();
+		
+		for(Element row : rows){
+			String headerContent = row.select("th").text().toLowerCase();
+			Elements links = row.select("a");
+			
+			for (Element link : links){
+				String tmpFullUrl = wikiBase + link.attr("href");
+				
+				if(headerContent.equals("members") || headerContent.equals("former members") || headerContent.equals("past members")){
+					memberLinks.add(tmpFullUrl);
+				}else if (headerContent.equals("associated acts")){
+					associatedActsLinks.add(tmpFullUrl);
+				}
+			}
+		}
+		
+		if(memberLinks.size() > 0){
+			pageType = PageType.BAND;
+			return memberLinks;
+		}else if(associatedActsLinks.size() > 0){
+			pageType = PageType.ARTIST;
+			return associatedActsLinks;
+		}else{
+			pageType = PageType.UNKNOWN;
+			return new ArrayList<String>();
+		}
+	}
+	
+	private void processArtist(QueueArtist qa, String artistName){
+		visited.put(curArtist.getToURL(), artistName);
+		
+		curArtist.setToArtist(artistName);
+		if(curArtist.getConnection() == null){
+			curArtist.setConnection("Direct");
+		}
+		System.out.println(curArtist);
+
+		if(curArtist.isComplete() && curArtist.isValidNode()){
+			completed.add(curArtist);
+		}
 	}
 	
 	private void waitOne(){
