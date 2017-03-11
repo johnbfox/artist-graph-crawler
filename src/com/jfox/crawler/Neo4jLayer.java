@@ -10,15 +10,15 @@ import org.neo4j.driver.v1.Session;
 import org.neo4j.driver.v1.StatementResult;
 import org.neo4j.driver.v1.Transaction;
 
-public class Neo4jLayer {
+public class Neo4jLayer implements DatabaseLayer {
 	
 	private static org.neo4j.driver.v1.Driver driver;
 	
-	public static void init(){
+	public void init(){
 		driver = GraphDatabase.driver( "bolt://localhost:7687", AuthTokens.basic( "neo4j", "L@gn@f2016" ) );
 	}
 	
-	public static void saveArtist(Node n){
+	public void saveArtist(Node n){
 		try (Session session = driver.session()){
 			try ( Transaction tx = session.beginTransaction()){
 				if(!hasArtist(tx, n.getArtistName())){
@@ -37,7 +37,7 @@ public class Neo4jLayer {
 		}
 	}
 	
-	public static void close(){
+	public void close(){
 		driver.close();
 	}
 	
@@ -48,8 +48,8 @@ public class Neo4jLayer {
 	}
 	
 	public static void createLink(Transaction tx, String name1, String name2){
-		if(name1.toLowerCase() != "Wikipedia, the free encyclopedia".toLowerCase() && name2 != "Wikipedia, the free encyclopedia".toLowerCase()){
-			tx.run("MATCH (a1:Artist {name:{name1}}), (a2:Artist {name:{name2}}) CREATE (a1)-[:LINK]->(a2)",
+		if(!name1.toLowerCase().contains("Wikipedia, the free encyclopedia") && !name2.toLowerCase().contains("Wikipedia, the free encyclopedia")){
+			tx.run("MATCH (a1:Artist {name:{name1}}), (a2:Artist {name:{name2}}) CREATE UNIQUE (a1)-[:LINK]->(a2)",
 					parameters("name1",name1, "name2", name2));
 		}
 	}

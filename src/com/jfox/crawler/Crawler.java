@@ -2,7 +2,7 @@ package com.jfox.crawler;
 
 import java.util.Queue;
 import java.util.Set;
-
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
@@ -13,6 +13,7 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.jsoup.HttpStatusException;
 
 public class Crawler {
 	
@@ -40,12 +41,18 @@ public class Crawler {
 	public void crawl(int iterations){
 		int i = 0;
 		isCrawling = i < iterations;
+		
 		while((curArtist = linkQueue.poll()) != null || isCrawling){
 			try{
-				if(visited.get(curArtist.getToURL()) == null){
-					step();
-					i++;
-					isCrawling = (i < iterations);
+				step();
+				i++;
+				isCrawling = (i < iterations);
+				if(isCrawling && i % 100 ==0){
+					System.out.println(i + " out of " + iterations + " iterations complete"); 
+				}else if(!isCrawling){
+					if(linkQueue.size() % 100 == 0){
+						System.out.println(linkQueue.size() + " backlog artists left.");
+					}
 				}
 			}catch(NullPointerException e){
 				break;
@@ -73,14 +80,44 @@ public class Crawler {
 			}			
 			waitOne();
 			Document doc  = Jsoup.connect(curArtist.getToURL()).get();
+			
 			Elements infoTable = doc.select(".infobox");
 			String pageTitle = doc.title().replace(" - Wikipedia", "");		
 			Elements rows = infoTable.select("tr");
 			
 			PageType pageType = PageType.UNKNOWN;
 			
+			List<String> memberLinks = new ArrayList<String>();
+			List<String> associatedActsLinks = new ArrayList<String>();
 			
-			List<String> links = extractLinks(rows, pageType);
+			for(Element row : rows){
+				String headerContent = row.select("th").text().toLowerCase();
+				Elements links = row.select("a");
+				
+				for (Element link : links){
+					String tmpFullUrl = wikiBase + link.attr("href");
+					
+					if(headerContent.equals("members") || headerContent.equals("former members") || headerContent.equals("past members")){
+						memberLinks.add(tmpFullUrl);
+					}else if (headerContent.equals("associated acts")){
+						associatedActsLinks.add(tmpFullUrl);
+					}
+				}
+			}
+			
+			List<String> links;
+			
+			if(memberLinks.size() > 0){
+				pageType = PageType.BAND;
+				links = memberLinks;
+			}else if(associatedActsLinks.size() > 0){
+				pageType = PageType.ARTIST;
+				links = associatedActsLinks;
+			}else{
+				pageType = PageType.UNKNOWN;
+				links = new ArrayList<String>();
+			}
+			
 			ArrayList<QueueArtist> newArtists = new ArrayList<QueueArtist>();
 			
 			for(String link : links){
@@ -109,6 +146,7 @@ public class Crawler {
 			}
 			
 			
+			//Continue adding new elements to queue
 			if(isCrawling){
 				for(QueueArtist an : newArtists){
 					linkQueue.add(an);
@@ -119,10 +157,10 @@ public class Crawler {
 			if(pageType == PageType.ARTIST){
 				processArtist(curArtist, pageTitle);
 			}
-			
-			System.out.println();
-		}catch(Exception e){
-			
+		}catch(HttpStatusException e){
+			System.err.println("Page not found.");
+		}catch(IOException e){
+			e.printStackTrace();
 		}
 	}
 	
@@ -169,53 +207,23 @@ public class Crawler {
 				}
 			}
 		}
-		System.out.println("***************RECONCILED DATA *************");
+		System.out.println("*************** RECONCILED DATA *************");
 		System.out.println(artistGraph);
 		System.out.println();
 	}
 	
 	public void saveData(){
-		Neo4jLayer.init();
+		Neo4jLayer nl = new Neo4jLayer();
+		nl.init();
 		Set<String> names = artistGraph.keySet();
 		
 		for(String name : names){
-			Neo4jLayer.saveArtist(artistGraph.get(name));
+			nl.saveArtist(artistGraph.get(name));
 		}
 		
 		System.out.println(names.size() + " artists saved to db.");
 		
-		Neo4jLayer.close();
-	}
-	
-	private List<String> extractLinks(Elements rows, PageType pageType){
-		List<String> memberLinks = new ArrayList<String>();
-		List<String> associatedActsLinks = new ArrayList<String>();
-		
-		for(Element row : rows){
-			String headerContent = row.select("th").text().toLowerCase();
-			Elements links = row.select("a");
-			
-			for (Element link : links){
-				String tmpFullUrl = wikiBase + link.attr("href");
-				
-				if(headerContent.equals("members") || headerContent.equals("former members") || headerContent.equals("past members")){
-					memberLinks.add(tmpFullUrl);
-				}else if (headerContent.equals("associated acts")){
-					associatedActsLinks.add(tmpFullUrl);
-				}
-			}
-		}
-		
-		if(memberLinks.size() > 0){
-			pageType = PageType.BAND;
-			return memberLinks;
-		}else if(associatedActsLinks.size() > 0){
-			pageType = PageType.ARTIST;
-			return associatedActsLinks;
-		}else{
-			pageType = PageType.UNKNOWN;
-			return new ArrayList<String>();
-		}
+		nl.close();
 	}
 	
 	private void processArtist(QueueArtist qa, String artistName){
@@ -225,7 +233,6 @@ public class Crawler {
 		if(curArtist.getConnection() == null){
 			curArtist.setConnection("Direct");
 		}
-		System.out.println(curArtist);
 
 		if(curArtist.isComplete() && curArtist.isValidNode()){
 			completed.add(curArtist);
